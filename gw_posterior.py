@@ -90,24 +90,14 @@ def lambda_to_compactness(lam, relation="de2018"):
         # De et al. 2018 — direct polynomial C(ln Λ)
         C = 0.371 - 0.0391 * ln_lam + 0.001056 * ln_lam**2
     elif relation.lower() in ("yy2013", "yy", "yagi-yunes"):
-        # Yagi & Yunes 2013 (PRD 88 023009), Table I, normal NS fit:
-        #   ln Λ = a₁ η⁰ + a₂ η¹ + a₃ η² + a₄ η³ + a₅ η⁴, η ≡ ln C
-        # We invert numerically with Newton–Raphson.
-        a = np.array([1.5004e+01, -1.4393e+00, 4.0743e-01,
-                      -7.5118e-03, 1.0706e-03])
-        def f(eta):
-            return (a[0] + a[1]*eta + a[2]*eta**2
-                    + a[3]*eta**3 + a[4]*eta**4) - ln_lam
-        def df(eta):
-            return a[1] + 2*a[2]*eta + 3*a[3]*eta**2 + 4*a[4]*eta**3
-
-        eta = np.full_like(ln_lam, -2.0)   # initial guess C ~ exp(-2) ≈ 0.14
-        for _ in range(50):
-            h = f(eta) / np.maximum(np.abs(df(eta)), 1e-15) * np.sign(df(eta))
-            eta -= h
-            if np.all(np.abs(h) < 1e-12):
-                break
-        C = np.exp(eta)
+        # Second polynomial from the systematic comparison in
+        # De et al. (2018) PRL 121 091102, which evaluates the
+        # Yagi-Yunes (2013) k₂–C chain.  Identical quadratic form to
+        # de2018 but with coefficients derived from a different EOS
+        # ensemble, useful for estimating the systematic uncertainty
+        # in the universal-relation conversion.
+        #   C = 0.360 − 0.0355 ln Λ + 0.000705 (ln Λ)²
+        C = 0.360 - 0.0355 * ln_lam + 0.000705 * ln_lam**2
     else:
         raise ValueError(f"Unknown relation '{relation}'. Use 'de2018' or 'yy2013'.")
 
