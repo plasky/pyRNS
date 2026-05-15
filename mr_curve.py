@@ -197,7 +197,7 @@ def make_plots(seq, is_tab, eos_label="", savepdf=None):
     ax.set_title("Mass–Radius diagram")
     ax.legend(fontsize=9)
     ax.grid(True, alpha=0.25)
-    ax.annotate(f" $M_{{\\rm max}}$", xy=(R[imax], M[imax]),
+    ax.annotate(" $M_{\\rm max}$", xy=(R[imax], M[imax]),
                 xytext=(R[imax] + 0.04 * (R.max() - R.min()), M[imax]),
                 fontsize=9, color=col_max,
                 arrowprops=dict(arrowstyle="->", color=col_max, lw=0.8))

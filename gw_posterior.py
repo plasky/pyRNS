@@ -47,7 +47,6 @@ References
 
 import argparse
 import os
-import sys
 import numpy as np
 
 # ---------------------------------------------------------------------------
@@ -372,7 +371,6 @@ def plot_mr_ppd(M_arr, R_arr, labels=None, *,
     from pyRNS import _apply_style
     _apply_style()
     import matplotlib.pyplot as plt
-    import matplotlib.colors as mcolors
     from scipy.stats import gaussian_kde
 
     fig, ax = plt.subplots(figsize=(7, 6), constrained_layout=True)
@@ -417,8 +415,8 @@ def plot_mr_ppd(M_arr, R_arr, labels=None, *,
 
     # Draw filled contours + lines
     colours = plt.cm.Blues(np.linspace(0.35, 0.75, len(credible_levels)))
-    cf = ax.contourf(RR, MM, ZZ, levels=[levels[0], ZZ.max()],
-                     colors=[colours[-1]], alpha=0.55, zorder=1)
+    ax.contourf(RR, MM, ZZ, levels=[levels[0], ZZ.max()],
+                colors=[colours[-1]], alpha=0.55, zorder=1)
     if len(levels) > 1:
         ax.contourf(RR, MM, ZZ, levels=[levels[-1], ZZ.max()],
                     colors=[colours[0]], alpha=0.35, zorder=1)
@@ -460,7 +458,7 @@ def _compute_and_overlay(eos_file, ax):
     from pyRNS import (
         make_grid, precompute_legendre, compute_kernels,
         load_eos, make_center, sphere, spin, mass_radius,
-        C, G, MSUN, KAPPA, KSCALE, SDIV, MDIV,
+        C, MSUN, KSCALE, SDIV, MDIV,
     )
     import numpy as np
 

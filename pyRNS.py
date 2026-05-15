@@ -263,33 +263,114 @@ def p_at_h_poly(h, Gamma_P):
 
 
 # ---- EOS dispatch (pick tabulated vs polytropic) ----------------------
+# Tabulated scalar lookups use np.interp (C implementation) instead of
+# the pure-Python _lagrange4, giving ~10× speedup in the TOV solver.
 
 def _p_at_e(e, eos):
     if eos['type'] == 'tab':
-        return p_at_e_tab(e, eos['log_e'], eos['log_p'])
+        if e <= 0.0: return 0.0
+        lge = np.log10(e)
+        if lge < eos['log_e'][0]: return 0.0
+        return 10.0 ** float(np.interp(min(lge, eos['log_e'][-1]),
+                                       eos['log_e'], eos['log_p']))
     return p_at_e_poly(e, eos['Gamma_P'])
 
 def _e_at_p(p, eos):
     if eos['type'] == 'tab':
-        return e_at_p_tab(p, eos['log_e'], eos['log_p'])
+        if p <= 0.0: return 0.0
+        lgp = np.log10(p)
+        if lgp < eos['log_p'][0]: return 0.0
+        return 10.0 ** float(np.interp(min(lgp, eos['log_p'][-1]),
+                                       eos['log_p'], eos['log_e']))
     return e_at_p_poly(p, eos['Gamma_P'])
 
 def _h_at_p(p, eos):
     if eos['type'] == 'tab':
-        return h_at_p_tab(p, eos['log_p'], eos['log_h'])
+        if p <= 0.0: return 0.0
+        lgp = np.log10(p)
+        if lgp < eos['log_p'][0]: return 0.0
+        return 10.0 ** float(np.interp(min(lgp, eos['log_p'][-1]),
+                                       eos['log_p'], eos['log_h']))
     return h_at_p_poly(p, eos['Gamma_P'])
 
 def _p_at_h(h, eos):
     if eos['type'] == 'tab':
-        return p_at_h_tab(h, eos['log_h'], eos['log_p'])
+        if h <= 0.0: return 0.0
+        lgh = np.log10(h)
+        if lgh < eos['log_h'][0]: return 0.0
+        return 10.0 ** float(np.interp(min(lgh, eos['log_h'][-1]),
+                                       eos['log_h'], eos['log_p']))
     return p_at_h_poly(h, eos['Gamma_P'])
 
 def _n0_at_e(e, eos):
     if eos['type'] == 'tab':
-        return n0_at_e_tab(e, eos['log_e'], eos['log_n0'])
+        if e <= 0.0: return 0.0
+        lge = np.log10(e)
+        if lge < eos['log_e'][0]: return 0.0
+        return 10.0 ** float(np.interp(min(lge, eos['log_e'][-1]),
+                                       eos['log_e'], eos['log_n0']))
     if e <= 0.0: return 0.0
     p    = p_at_e_poly(e, eos['Gamma_P'])
     rho0 = p ** (1.0 / eos['Gamma_P'])
+    return rho0
+
+
+# ---- Vectorised EOS helpers (operate on numpy arrays) -----------------
+
+def _p_at_h_arr(h_arr, eos):
+    """Vectorised _p_at_h: h_arr is an ndarray, returns ndarray."""
+    if eos['type'] == 'tab':
+        mask = h_arr > 0.0
+        lgh  = np.where(mask, np.log10(np.maximum(h_arr, 1e-300)),
+                        eos['log_h'][0])
+        lgh  = np.clip(lgh, eos['log_h'][0], eos['log_h'][-1])
+        return np.where(mask, 10.0 ** np.interp(lgh, eos['log_h'], eos['log_p']), 0.0)
+    # Polytropic: vectorised Newton-Raphson
+    Gamma_P = eos['Gamma_P']
+    Gm1     = Gamma_P - 1.0
+    mask    = h_arr > 0.0
+    h       = np.where(mask, h_arr, 0.0)
+    rho0    = np.maximum((h * Gm1 / Gamma_P) ** (1.0 / Gm1), 1e-30)
+    for _ in range(60):
+        p    = rho0 ** Gamma_P
+        e    = rho0 + p / Gm1
+        hc   = np.log((e + p) / rho0)
+        dh   = ((1.0 + Gamma_P * rho0 ** (Gamma_P - 1.0) / Gm1
+                 + Gamma_P * rho0 ** (Gamma_P - 1.0)) / (e + p) - 1.0 / rho0)
+        drho = (h - hc) / np.maximum(dh, 1e-30)
+        rho0 = np.maximum(rho0 + drho, 1e-30)
+        if np.max(np.abs(drho)) < 1e-12 * np.max(rho0):
+            break
+    return np.where(mask, rho0 ** Gamma_P, 0.0)
+
+
+def _e_at_p_arr(p_arr, eos):
+    """Vectorised _e_at_p: p_arr is an ndarray, returns ndarray."""
+    if eos['type'] == 'tab':
+        mask = p_arr > 0.0
+        lgp  = np.where(mask, np.log10(np.maximum(p_arr, 1e-300)),
+                        eos['log_p'][0])
+        lgp  = np.clip(lgp, eos['log_p'][0], eos['log_p'][-1])
+        return np.where(mask, 10.0 ** np.interp(lgp, eos['log_p'], eos['log_e']), 0.0)
+    Gamma_P = eos['Gamma_P']
+    mask    = p_arr > 0.0
+    p       = np.where(mask, p_arr, 0.0)
+    rho0    = p ** (1.0 / Gamma_P)
+    return np.where(mask, rho0 + p / (Gamma_P - 1.0), 0.0)
+
+
+def _n0_at_e_arr(e_arr, eos):
+    """Vectorised _n0_at_e: e_arr is an ndarray, returns ndarray."""
+    if eos['type'] == 'tab':
+        mask = e_arr > 0.0
+        lge  = np.where(mask, np.log10(np.maximum(e_arr, 1e-300)),
+                        eos['log_e'][0])
+        lge  = np.clip(lge, eos['log_e'][0], eos['log_e'][-1])
+        return np.where(mask, 10.0 ** np.interp(lge, eos['log_e'], eos['log_n0']), 0.0)
+    Gamma_P = eos['Gamma_P']
+    mask    = e_arr > 0.0
+    p       = np.where(mask, np.vectorize(lambda e: p_at_e_poly(e, Gamma_P))(e_arr), 0.0)
+    rho0    = np.where(mask, p ** (1.0 / Gamma_P), 0.0)
     return rho0
 
 def make_center(e_center, eos):
@@ -378,36 +459,43 @@ def grad_m(f):
 
 def _tov_rhs(r_is, state, e_center, p_center, p_surface, eos):
     """
-    RHS of the three TOV ODEs in isotropic radial coordinate r_is:
-      state = [r_schw, m_grav, p]
-    Returns [dr/dr_is, dm/dr_is, dp/dr_is].
+    RHS of the three TOV ODEs in isotropic radial coordinate r_is.
+    state = [r_schw, m_grav, p]; returns ndarray [dr, dm, dp]/dr_is.
     """
-    r, m, p = state
+    r, m, p = state[0], state[1], state[2]
 
     if r_is < RMIN:
-        # Centre: leading-order Taylor terms
-        dmdr = 4.0 * PI * e_center * max(r, 0.0) ** 2
-        dpdr = (-4.0 * PI * (e_center + p_center) *
-                (e_center + 3.0 * p_center) * r / 3.0)
-        return [1.0, dmdr, dpdr]
+        r_pos = r if r > 0.0 else 0.0
+        dmdr  = 4.0 * PI * e_center * r_pos * r_pos
+        dpdr  = (-4.0 * PI * (e_center + p_center) *
+                 (e_center + 3.0 * p_center) * r_pos / 3.0)
+        return np.array([1.0, dmdr, dpdr])
 
     e_d   = _e_at_p(p, eos) if p > p_surface else 0.0
-    denom = max(1.0 - 2.0 * m / max(r, 1e-30), 1e-30)
+    r_safe = r  if r  > 1e-30 else 1e-30
+    denom = 1.0 - 2.0 * m / r_safe
+    if denom < 1e-30:
+        denom = 1e-30
     sq    = np.sqrt(denom)
 
     drdr  = (r / r_is) * sq
-    dmdr  = 4.0 * PI * e_d * r ** 3 * sq / r_is
-    dpdr  = (-(e_d + p) * (m + 4.0 * PI * r ** 3 * p) /
-             max(r * r_is * sq, 1e-30))
-    return [drdr, dmdr, dpdr]
+    dmdr  = 4.0 * PI * e_d * r * r * r * sq / r_is
+    denom2 = r_safe * r_is * sq
+    if denom2 < 1e-30:
+        denom2 = 1e-30
+    dpdr  = -(e_d + p) * (m + 4.0 * PI * r * r * r * p) / denom2
+    return np.array([drdr, dmdr, dpdr])
 
+
+# Pre-allocated workspace for _rk4_step to avoid per-call array creation
+_rk4_k = np.zeros((4, 3))
 
 def _rk4_step(r_is, state, h, e_center, p_center, p_surface, eos):
-    k1 = np.array(_tov_rhs(r_is,       state,             e_center, p_center, p_surface, eos))
-    k2 = np.array(_tov_rhs(r_is+h/2,   state + h/2 * k1, e_center, p_center, p_surface, eos))
-    k3 = np.array(_tov_rhs(r_is+h/2,   state + h/2 * k2, e_center, p_center, p_surface, eos))
-    k4 = np.array(_tov_rhs(r_is+h,     state + h   * k3, e_center, p_center, p_surface, eos))
-    return state + h / 6.0 * (k1 + 2*k2 + 2*k3 + k4)
+    _rk4_k[0] = _tov_rhs(r_is,       state,                     e_center, p_center, p_surface, eos)
+    _rk4_k[1] = _tov_rhs(r_is+h*0.5, state + h*0.5 * _rk4_k[0], e_center, p_center, p_surface, eos)
+    _rk4_k[2] = _tov_rhs(r_is+h*0.5, state + h*0.5 * _rk4_k[1], e_center, p_center, p_surface, eos)
+    _rk4_k[3] = _tov_rhs(r_is+h,     state + h     * _rk4_k[2], e_center, p_center, p_surface, eos)
+    return state + (h / 6.0) * (_rk4_k[0] + 2.0*_rk4_k[1] + 2.0*_rk4_k[2] + _rk4_k[3])
 
 
 def solve_tov(e_center, p_center, p_surface, eos):
@@ -416,57 +504,47 @@ def solve_tov(e_center, p_center, p_surface, eos):
 
     Returns arrays on RDIV+1 evenly-spaced r_is points together with
     r_is_final (isotropic stellar radius) and m_final (total mass).
+
+    Uses scipy.integrate.solve_ivp (adaptive RK45) with surface-event detection
+    to efficiently locate r_is_final, then evaluates the dense solution on the
+    RDIV uniform output grid.
     """
-    # Rough stellar radius estimate (pressure scale height)
-    r_is_est = max(np.sqrt(3.0 * p_center /
-                           (2.0 * PI * max(e_center + p_center, 1e-30) *
-                            max(e_center, 1e-30))), 1e-6)
+    from scipy.integrate import solve_ivp
 
-    # Pass 1 — coarse scan to bracket the surface
-    h1    = r_is_est / 100.0
-    r_is  = 0.0
-    state = np.array([1e-3 * RMIN, 0.0, p_center])
-    r_is_final = r_is_est
-    for _ in range(2000):
-        state  = _rk4_step(r_is, state, h1, e_center, p_center, p_surface, eos)
-        r_is  += h1
-        if state[2] <= p_surface:
-            r_is_final = r_is
-            break
+    # Rough stellar radius upper bound (3× pressure-scale-height estimate)
+    r_is_max = 3.0 * max(np.sqrt(3.0 * p_center /
+                                 (2.0 * PI * max(e_center + p_center, 1e-30) *
+                                  max(e_center, 1e-30))), 1e-6)
 
-    # Pass 2 — refined scan
-    h2    = r_is_final / 10000.0
-    r_is  = 0.0
-    state = np.array([1e-3 * RMIN, 0.0, p_center])
-    for _ in range(30000):
-        state  = _rk4_step(r_is, state, h2, e_center, p_center, p_surface, eos)
-        r_is  += h2
-        if state[2] <= p_surface:
-            r_is_final = r_is
-            break
-    m_final = state[1]
+    def _rhs(r_is, state):
+        return _tov_rhs(r_is, state, e_center, p_center, p_surface, eos)
 
-    # Pass 3 — store on RDIV uniform grid
-    h3       = r_is_final / RDIV
-    r_is_arr = np.zeros(RDIV + 1)
-    r_arr    = np.zeros(RDIV + 1)
-    m_arr    = np.zeros(RDIV + 1)
-    p_arr    = np.zeros(RDIV + 1)
+    def _surface(r_is, state):
+        return state[2] - p_surface   # zero when p reaches surface
 
-    r_is  = 0.0
-    state = np.array([1e-3 * RMIN, 0.0, p_center])
-    r_is_arr[0] = 0.0
-    r_arr[0]    = state[0]
-    m_arr[0]    = 0.0
-    p_arr[0]    = p_center
+    _surface.terminal  = True
+    _surface.direction = -1           # trigger only on decreasing pressure
 
-    for k in range(1, RDIV + 1):
-        state       = _rk4_step(r_is, state, h3, e_center, p_center, p_surface, eos)
-        r_is       += h3
-        r_is_arr[k] = r_is
-        r_arr[k]    = state[0]
-        m_arr[k]    = state[1]
-        p_arr[k]    = max(state[2], 0.0)
+    y0  = np.array([1e-3 * RMIN, 0.0, p_center])
+    sol = solve_ivp(_rhs, [0.0, r_is_max], y0,
+                    method='RK45', events=_surface,
+                    dense_output=True, rtol=1e-8, atol=1e-10,
+                    max_step=r_is_max / 50.0)
+
+    # Extract surface location
+    if sol.t_events[0].size > 0:
+        r_is_final = float(sol.t_events[0][0])
+        m_final    = float(sol.y_events[0][0][1])
+    else:
+        r_is_final = float(sol.t[-1])
+        m_final    = float(sol.y[1, -1])
+
+    # Evaluate dense solution on uniform RDIV grid
+    r_is_arr = np.linspace(0.0, r_is_final, RDIV + 1)
+    y_grid   = sol.sol(r_is_arr)           # shape (3, RDIV+1)
+    r_arr    = y_grid[0]
+    m_arr    = y_grid[1]
+    p_arr    = np.maximum(y_grid[2], 0.0)
 
     # --- Metric functions on the interior ODE grid -------------------------
     # lambda_arr[k] = ln(R_s / r_is_int) — NEGATIVE inside the star because
@@ -496,7 +574,7 @@ def solve_tov(e_center, p_center, p_surface, eos):
             dnu = (m_k + 4.0 * PI * r_k ** 3 * p_k) / (r_k * ri_k * sq)
         else:
             dnu = 0.0
-        nu_arr[k] = nu_arr[k + 1] - dnu * h3   # ν decreases going inward
+        nu_arr[k] = nu_arr[k + 1] - dnu * (r_is_arr[k + 1] - r_is_arr[k])
 
     # Note: we do NOT override lambda_arr at the surface point k=RDIV with the
     # exterior formula.  The exterior formula gives a positive lambda while the
@@ -532,7 +610,6 @@ def sphere(s_gp, mu_arr, e_center, p_center, h_center,
 
     # r_e = r_is_final so that s=0.5 maps exactly to the stellar surface.
     # Potentials are stored in code units (divided by r_e²).
-    _ = lambda_arr[-1]   # interior lambda kept for reference (not used here)
     r_e = r_is_final
     re2 = r_e * r_e
 
@@ -675,22 +752,17 @@ def spin(s_gp, mu_arr, eos,
         diff_gp = gprp_pole - gprp_center
         r_e = np.sqrt(abs(2.0 * h_center / diff_gp)) if abs(diff_gp) > 1e-30 else r_e_in
         r_e = max(r_e, 1e-10)
-        # Fill matter fields from Bernoulli
-        re2 = r_e**2
-        for j in range(SDIV):
-            sv = s_gp[j]
-            for m in range(MDIV):
-                h_val = 0.5 * re2 * (gprp_pole - gama[j, m] - rho[j, m])
-                h_val = max(h_val, 0.0)
-                enthalpy[j, m] = h_val
-                if h_val > enthalpy_min:
-                    p_v = _p_at_h(h_val, eos)
-                    e_v = _e_at_p(p_v, eos)
-                else:
-                    p_v = 0.0; e_v = 0.0
-                pressure[j, m] = p_v
-                energy[j, m]   = e_v
-                velocity_sq[j, m] = 0.0
+        # Fill matter fields from Bernoulli (vectorised)
+        re2   = r_e ** 2
+        h_arr = np.maximum(0.5 * re2 * (gprp_pole - gama - rho), 0.0)
+        enthalpy[:]    = h_arr
+        velocity_sq[:] = 0.0
+        mask = h_arr > enthalpy_min
+        pressure[:] = 0.0;  energy[:] = 0.0
+        if mask.any():
+            p_v = _p_at_h_arr(h_arr[mask], eos)
+            pressure[mask] = p_v
+            energy[mask]   = _e_at_p_arr(p_v, eos)
         omega[:] = 0.0
         return r_e, 0.0
 
@@ -734,41 +806,29 @@ def spin(s_gp, mu_arr, eos,
         else:
             Omega = 0.0
 
-        # --- Matter fields on the whole grid --------------------------
-        re2 = r_e ** 2
-        for j in range(SDIV):
-            sv  = s_gp[j]
-            if sv < SMAX:
-                r_is_j = r_e * sv / (1.0 - sv)
-            else:
-                r_is_j = 1e20
-            for m in range(MDIV):
-                g_jm = gama[j, m]
-                r_jm = rho[j, m]
-                o_jm = omega[j, m]
+        # --- Matter fields on the whole grid (vectorised) -------------
+        re2    = r_e ** 2
+        r_is_v = np.where(s_gp < SMAX, r_e * s_gp / (1.0 - s_gp), 1e20)
 
-                # Fluid speed (ZAMO frame)
-                # v = (Ω − ω_phys) · r_is · sinθ · exp(−ν)
-                # ν = 0.5·(γ+ρ)·r_e²
-                v2 = ((Omega - o_jm / r_e) * r_is_j * sin_th[m] *
-                      np.exp(-0.5 * (g_jm + r_jm) * re2)) ** 2
-                v2 = min(v2, 0.9999)
-                velocity_sq[j, m] = v2
+        # v² = [(Ω − ω/r_e) · r_is · sinθ · exp(−½(γ+ρ)r_e²)]²
+        v2_arr = ((Omega - omega / r_e) * r_is_v[:, None] * sin_th[None, :]
+                  * np.exp(np.clip(-0.5 * (gama + rho) * re2, -300, 300))) ** 2
+        np.clip(v2_arr, 0.0, 0.9999, out=v2_arr)
+        velocity_sq[:] = v2_arr
 
-                # Enthalpy: h = ν_pole − ν(j,m) + ln(γ_Lorentz)
-                # h_c is encoded in r_e via the pole self-consistency condition
-                h_val = (0.5 * re2 * (gprp_pole - g_jm - r_jm)
-                         - 0.5 * np.log(max(1.0 - v2, 1e-30)))
-                enthalpy[j, m] = max(h_val, 0.0)
+        # Enthalpy from Bernoulli + Lorentz factor
+        h_arr = (0.5 * re2 * (gprp_pole - gama - rho)
+                 - 0.5 * np.log(np.maximum(1.0 - v2_arr, 1e-30)))
+        np.maximum(h_arr, 0.0, out=h_arr)
+        enthalpy[:] = h_arr
 
-                if h_val > enthalpy_min:
-                    p_v = _p_at_h(h_val, eos)
-                    e_v = _e_at_p(p_v, eos)
-                else:
-                    p_v = 0.0
-                    e_v = 0.0
-                pressure[j, m] = p_v
-                energy[j, m]   = e_v
+        # EOS lookup on the interior only (vectorised)
+        pressure[:] = 0.0;  energy[:] = 0.0
+        mask = h_arr > enthalpy_min
+        if mask.any():
+            p_v = _p_at_h_arr(h_arr[mask], eos)
+            pressure[mask] = p_v
+            energy[mask]   = _e_at_p_arr(p_v, eos)
 
         # --- Source terms ---------------------------------------------
         dg_s = grad_s(gama)
@@ -778,80 +838,77 @@ def spin(s_gp, mu_arr, eos,
         do_s = grad_s(omega)
         do_m = grad_m(omega)
 
-        S_rho  = np.zeros((SDIV, MDIV))
-        S_gama = np.zeros((SDIV, MDIV))
-        S_omega= np.zeros((SDIV, MDIV))
+        # --- Source terms (fully vectorised) -------------------------
+        # Broadcast 1-D grid arrays to (SDIV, 1) and (1, MDIV) shapes.
+        sv_1 = s_gp[:, None]                              # (SDIV, 1)
+        s1_2 = sv_1 * (1.0 - sv_1)                       # sv*(1-sv)
+        s2_2 = np.where(sv_1 < SMAX,
+                        (sv_1 / np.maximum(1.0 - sv_1, 1e-15)) ** 2, 0.0)
+        sv4_2 = sv_1 ** 4
+        mu_2  = mu_arr[None, :]                           # (1, MDIV)
+        m1_2  = 1.0 - mu_2 ** 2
 
-        for j in range(1, SDIV):
-            sv  = s_gp[j]
-            s1  = sv * (1.0 - sv)
-            s2  = (sv / (1.0 - sv)) ** 2 if sv < SMAX else 0.0
-            for m in range(MDIV):
-                mu_m = mu_arr[m]
-                m1   = 1.0 - mu_m ** 2
+        exp_g2   = np.exp(np.clip(0.5 * gama,          -50,  50))
+        ea_2     = (16.0 * PI * re2
+                    * np.exp(np.clip(2.0 * alpha * re2, -100, 100)))
+        exp_neg2r = np.exp(np.clip(-2.0 * rho * re2,   -300, 300))
+        exp_negr  = np.exp(np.clip(-rho * re2,          -300, 300))
+        omv2_2   = np.maximum(1.0 - velocity_sq, 1e-10)
 
-                g_jm = gama[j, m]
-                r_jm = rho[j, m]
-                o_jm = omega[j, m]
-                e_jm = energy[j, m]
-                p_jm = pressure[j, m]
-                v2   = velocity_sq[j, m]
-                exp_g2 = np.exp(np.clip(0.5 * g_jm, -50, 50))
-                al     = alpha[j, m]
-                ea     = 16.0 * PI * np.exp(np.clip(2.0 * al * re2, -100, 100)) * re2
+        dgs = dg_s; dgm = dg_m
+        drs = dr_s; drm = dr_m
+        dos = do_s; dom = do_m
 
-                omv2 = max(1.0 - v2, 1e-10)
-                dgs  = dg_s[j, m];  dgm = dg_m[j, m]
-                drs  = dr_s[j, m];  drm = dr_m[j, m]
-                dos  = do_s[j, m];  dom = do_m[j, m]
+        S_rho = exp_g2 * (
+            0.5 * ea_2 * (energy + pressure) * s2_2 * (1.0 + velocity_sq) / omv2_2
+            + s2_2 * m1_2 * exp_neg2r * (s1_2 ** 2 * dos ** 2 + m1_2 * dom ** 2)
+            + s1_2 * dgs - mu_2 * dgm
+            + 0.5 * rho * (ea_2 * pressure * s2_2
+                           - s1_2 * dgs * (0.5 * s1_2 * dgs + 1.0)
+                           - dgm * (0.5 * m1_2 * dgm - mu_2))
+        )
 
-                # Source for rho
-                S_rho[j, m] = exp_g2 * (
-                    0.5 * ea * (e_jm + p_jm) * s2 * (1.0 + v2) / omv2
-                    + s2 * m1 * np.exp(-2.0 * r_jm * re2) *
-                      (s1 ** 2 * dos ** 2 + m1 * dom ** 2)
-                    + s1 * dgs - mu_m * dgm
-                    + 0.5 * r_jm * (ea * p_jm * s2
-                                    - s1 * dgs * (0.5 * s1 * dgs + 1.0)
-                                    - dgm * (0.5 * m1 * dgm - mu_m))
-                )
+        S_gama = exp_g2 * (
+            ea_2 * pressure * s2_2
+            + 0.5 * gama * (ea_2 * pressure * s2_2
+                            - 0.5 * (s1_2 * dgs) ** 2
+                            - 0.5 * m1_2 * dgm ** 2)
+        )
 
-                # Source for gama
-                S_gama[j, m] = exp_g2 * (
-                    ea * p_jm * s2
-                    + 0.5 * g_jm * (ea * p_jm * s2
-                                    - 0.5 * (s1 * dgs) ** 2
-                                    - 0.5 * m1 * dgm ** 2)
-                )
-
-                # Source for omega
-                S_omega[j, m] = exp_g2 * np.exp(-r_jm * re2) * (
-                    -ea * (Omega - o_jm / r_e) * (e_jm + p_jm) * s2 / omv2
-                    + o_jm * (
-                        -0.5 * ea * ((1.0 + v2) * e_jm + 2.0 * v2 * p_jm) /
-                        omv2 * s2
-                        - s1 * (2.0 * drs + 0.5 * dgs)
-                        + mu_m * (2.0 * drm + 0.5 * dgm)
-                        + 0.25 * s1 ** 2 * (4.0 * drs ** 2 - dgs ** 2)
-                        + 0.25 * m1 * (4.0 * drm ** 2 - dgm ** 2)
-                        - m1 * np.exp(-2.0 * r_jm * re2) *
-                          (sv ** 4 * dos ** 2 + s2 * m1 * dom ** 2)
-                    )
-                )
+        S_omega = exp_g2 * exp_negr * (
+            -ea_2 * (Omega - omega / r_e) * (energy + pressure) * s2_2 / omv2_2
+            + omega * (
+                -0.5 * ea_2 * ((1.0 + velocity_sq) * energy
+                                + 2.0 * velocity_sq * pressure) / omv2_2 * s2_2
+                - s1_2 * (2.0 * drs + 0.5 * dgs)
+                + mu_2 * (2.0 * drm + 0.5 * dgm)
+                + 0.25 * s1_2 ** 2 * (4.0 * drs ** 2 - dgs ** 2)
+                + 0.25 * m1_2 * (4.0 * drm ** 2 - dgm ** 2)
+                - m1_2 * exp_neg2r * (sv4_2 * dos ** 2 + s2_2 * m1_2 * dom ** 2)
+            )
+        )
+        # Centre row has no contribution
+        S_rho[0, :] = 0.0;  S_gama[0, :] = 0.0;  S_omega[0, :] = 0.0
 
         # --- D1: angular Legendre integrals of source terms ----------
         # Trapezoid integration over mu with DM spacing
-        D1_rho   = np.zeros((LMAX + 1, SDIV))
-        D1_gama  = np.zeros((LMAX + 1, SDIV))
-        D1_omega = np.zeros((LMAX + 1, SDIV))
+        # --- D1: angular Legendre integrals (vectorised with trapezoid) -----
+        # Trapezoid weights: w[0]=w[-1]=0.5, w[1:-1]=1, scaled by DM
+        _w = np.ones(MDIV); _w[0] = 0.5; _w[-1] = 0.5
+        _w *= DM                              # shape (MDIV,)
 
-        for k in range(SDIV):
-            # n=0 monopole (P_0=1, gama and omega have no monopole)
-            D1_rho[0, k] = DM * np.trapezoid(S_rho[k, :] * P_2n[:, 0], dx=1.0)
-            for n in range(1, LMAX + 1):
-                D1_rho[n, k]   = DM * np.trapezoid(S_rho[k, :]   * P_2n[:, n],           dx=1.0)
-                D1_gama[n, k]  = DM * np.trapezoid(S_gama[k, :]  * sin_2n1_theta[:, n],   dx=1.0)
-                D1_omega[n, k] = DM * np.trapezoid(S_omega[k, :]  * sin_th * P1_2n1[:, n], dx=1.0)
+        # D1_rho[n, k]   = DM * trapz(S_rho[k, :] * P_2n[:, n])
+        # Vectorise over k and n simultaneously via matrix multiply:
+        # weighted sources: (SDIV, MDIV) * (MDIV,) → weight each row
+        Sw_rho   = S_rho   * _w[None, :]    # (SDIV, MDIV)
+        Sw_gama  = S_gama  * _w[None, :]
+        S_om_th  = S_omega * sin_th[None, :]
+        Sw_omega = S_om_th * _w[None, :]
+
+        # D1_rho: shape (LMAX+1, SDIV) = P_2n.T @ Sw_rho.T
+        D1_rho   = (Sw_rho  @ P_2n).T           # (LMAX+1, SDIV)
+        D1_gama  = (Sw_gama @ sin_2n1_theta).T  # (LMAX+1, SDIV)
+        D1_omega = (Sw_omega @ P1_2n1).T         # (LMAX+1, SDIV)
 
         # --- D2: solve 1D radial BVP for each Legendre mode ----------
         # ODE in physical r_is coords: u'' + (2/r)u' - l(l+1)/r^2 u = f(r)
@@ -938,54 +995,54 @@ def spin(s_gp, mu_arr, eos,
         dg_mm = grad_m(dg_m2)
         dg_sm = grad_s(dg_m2)
 
-        da_dm = np.zeros((SDIV, MDIV))
-        for j in range(1, SDIV):
-            sv  = s_gp[j]
-            s1  = sv * (1.0 - sv)
-            for m in range(MDIV):
-                mu_m = mu_arr[m]
-                m1   = 1.0 - mu_m ** 2
+        # --- da_dm: constraint equation for alpha (vectorised) --------
+        sv_1b   = s_gp[:, None]
+        s1_b    = sv_1b * (1.0 - sv_1b)
+        sv_r_b  = sv_1b / np.maximum(1.0 - sv_1b, 1e-15)  # sv/(1-sv)
+        mu_1b   = mu_arr[None, :]
+        m1_b    = 1.0 - mu_1b ** 2
 
-                dgs  = dg_s2[j, m];  dgm = dg_m2[j, m]
-                drs  = dr_s2[j, m];  drm = dr_m2[j, m]
-                dos  = do_s[j, m];   dom = do_m[j, m]
-                dgss = dg_ss[j, m];  dgmm = dg_mm[j, m]
-                dgsm = dg_sm[j, m]
+        dgs_b = dg_s2; dgm_b = dg_m2
+        drs_b = dr_s2; drm_b = dr_m2
+        dos_b = do_s;  dom_b = do_m
+        dgss_b = dg_ss; dgmm_b = dg_mm; dgsm_b = dg_sm
 
-                A      = 1.0 + s1 * dgs
-                B      = -mu_m + m1 * dgm
-                denom2 = max(m1 * A * A + B * B, 1e-30)
+        A_b      = 1.0 + s1_b * dgs_b
+        B_b      = -mu_1b + m1_b * dgm_b
+        denom2_b = np.maximum(m1_b * A_b ** 2 + B_b ** 2, 1e-30)
 
-                d_gss = s1 * dgss + (1.0 - 2.0 * sv) * dgs
-                d_gmm = m1 * dgmm - 2.0 * mu_m * dgm
+        d_gss_b = s1_b * dgss_b + (1.0 - 2.0 * sv_1b) * dgs_b
+        d_gmm_b = m1_b * dgmm_b - 2.0 * mu_1b * dgm_b
 
-                t1 = (2.0 * sv ** 2 * (sv / max(1.0 - sv, 1e-15)) *
-                      m1 * dos * dom * A
-                      - (sv ** 4 * dos ** 2 -
-                         (sv / max(1.0 - sv, 1e-15)) ** 2 * m1 * dom ** 2) * B)
-                t3 = s1 * d_gss + (s1 * dgs) ** 2
-                t4 = dgm * B
-                t5 = (s1 ** 2 * (drs + dgs) ** 2 - m1 * (drm + dgm) ** 2) * B
-                t6 = s1 * m1 * (0.5 * (drs + dgs) * (drm + dgm) + dgsm + dgs * dgm) * A
-                t7 = s1 * mu_m * dgs * A
-                t8 = m1 * np.exp(np.clip(-2.0 * rho[j, m] * re2, -300, 300))
+        t1_b = (2.0 * sv_1b ** 2 * sv_r_b * m1_b * dos_b * dom_b * A_b
+                - (sv_1b ** 4 * dos_b ** 2
+                   - sv_r_b ** 2 * m1_b * dom_b ** 2) * B_b)
+        t3_b = s1_b * d_gss_b + (s1_b * dgs_b) ** 2
+        t4_b = dgm_b * B_b
+        t5_b = (s1_b ** 2 * (drs_b + dgs_b) ** 2
+                - m1_b * (drm_b + dgm_b) ** 2) * B_b
+        t6_b = (s1_b * m1_b
+                * (0.5 * (drs_b + dgs_b) * (drm_b + dgm_b)
+                   + dgsm_b + dgs_b * dgm_b) * A_b)
+        t7_b = s1_b * mu_1b * dgs_b * A_b
+        t8_b = m1_b * np.exp(np.clip(-2.0 * rho * re2, -300, 300))
 
-                da_dm[j, m] = (-0.5 * (drm + dgm)
-                               - (0.5 * (t3 - d_gmm - t4) * B
-                                  + 0.25 * t5 - t6 + t7
-                                  + 0.25 * t8 * t1) / denom2)
+        da_dm = (-0.5 * (drm_b + dgm_b)
+                 - (0.5 * (t3_b - d_gmm_b - t4_b) * B_b
+                    + 0.25 * t5_b - t6_b + t7_b
+                    + 0.25 * t8_b * t1_b) / denom2_b)
+        da_dm[0, :] = 0.0   # centre row excluded
 
-        # Integrate dα/dμ in mu; apply axis boundary condition
+        # Integrate dα/dμ: cumulative trapezoid along mu axis (axis=1)
+        # alpha[j, m] = sum_{i=1}^{m} 0.5*DM*(da_dm[j,i] + da_dm[j,i-1])
+        da_pair = 0.5 * DM * (da_dm[1:, :-1] + da_dm[1:, 1:])  # (SDIV-1, MDIV-1)
         alpha[0, :] = 0.0
-        for j in range(1, SDIV):
-            alpha[j, 0] = 0.0
-            for m in range(1, MDIV):
-                alpha[j, m] = (alpha[j, m - 1] +
-                               0.5 * DM * (da_dm[j, m] + da_dm[j, m - 1]))
-            # Enforce α[j, pole] = 0.5*(γ − ρ) at the rotation axis
-            shift = (-alpha[j, MDIV - 1] +
-                     0.5 * (gama[j, MDIV - 1] - rho[j, MDIV - 1]))
-            alpha[j, :] += shift
+        alpha[1:, 0] = 0.0
+        alpha[1:, 1:] = np.cumsum(da_pair, axis=1)
+        # Enforce α[j, pole] = 0.5*(γ − ρ) at the rotation axis
+        shift = (-alpha[1:, MDIV - 1]
+                 + 0.5 * (gama[1:, MDIV - 1] - rho[1:, MDIV - 1]))
+        alpha[1:, :] += shift[:, None]
 
         # --- Divergence guard -----------------------------------------
         if (abs(omega[1, 0]) > 100.0 or
@@ -1024,19 +1081,15 @@ def mass_radius(s_gp, mu_arr, eos,
     v2     = velocity_sq
     sin_th = np.sqrt(np.maximum(1.0 - mu_arr ** 2, 0.0))
 
-    # Baryon mass density on grid
-    rho0 = np.zeros((SDIV, MDIV))
-    for j in range(SDIV):
-        for m in range(MDIV):
-            e_jm = energy[j, m]
-            if e_jm > e_surface:
-                if is_tab:
-                    n0 = _n0_at_e(e_jm, eos)
-                    rho0[j, m] = n0 * MB * KSCALE * C * C
-                else:
-                    p_jm = pressure[j, m]
-                    h_jm = enthalpy[j, m]
-                    rho0[j, m] = (e_jm + p_jm) * np.exp(-h_jm)
+    # Baryon mass density on grid (vectorised)
+    mask_int = energy > e_surface
+    rho0     = np.zeros((SDIV, MDIV))
+    if mask_int.any():
+        if is_tab:
+            n0 = _n0_at_e_arr(energy, eos)
+            rho0[mask_int] = (n0 * MB * KSCALE * C * C)[mask_int]
+        else:
+            rho0[mask_int] = ((energy + pressure) * np.exp(-enthalpy))[mask_int]
 
     # Volume-element factor (√s/(1-s))^4 = s²/(1-s)^4 in s-coordinates.
     # This arises from r_is² dr_is = r_e³ s²/(1-s)^4 ds (the coordinate Jacobian).
@@ -1051,12 +1104,11 @@ def mass_radius(s_gp, mu_arr, eos,
 
     omv2 = np.maximum(1.0 - v2, 1e-10)
 
-    # ---- Gravitational mass ----------------------------------------
-    D_M = np.zeros((SDIV, MDIV))
-    for j in range(1, SDIV):
-        D_M[j, :] = (exp2ag[j, :] * jac[j] *
-                     ((energy[j, :] + pressure[j, :]) * (1.0 + v2[j, :]) / omv2[j, :]
-                      + 2.0 * pressure[j, :]))
+    # ---- Gravitational mass (fully vectorised) ----------------------
+    jac_2d = jac[:, None]   # broadcast over mu
+    D_M    = (exp2ag * jac_2d *
+              ((energy + pressure) * (1.0 + v2) / omv2 + 2.0 * pressure))
+    D_M[0, :] = 0.0
     Mass_int = np.trapezoid(np.trapezoid(D_M, dx=DM, axis=1), dx=DS)
     if is_tab:
         Mass = 4.0 * PI * np.sqrt(KAPPA) * C * C * r_e ** 3 / G * Mass_int
@@ -1064,10 +1116,8 @@ def mass_radius(s_gp, mu_arr, eos,
         Mass = 4.0 * PI * r_e ** 3 * Mass_int
 
     # ---- Baryon mass -----------------------------------------------
-    D_M0 = np.zeros((SDIV, MDIV))
-    for j in range(1, SDIV):
-        D_M0[j, :] = (exp2agr[j, :] * jac[j] *
-                      rho0[j, :] / np.sqrt(omv2[j, :]))
+    D_M0 = exp2agr * jac_2d * rho0 / np.sqrt(omv2)
+    D_M0[0, :] = 0.0
     Mass_0_int = np.trapezoid(np.trapezoid(D_M0, dx=DM, axis=1), dx=DS)
     if is_tab:
         Mass_0 = 4.0 * PI * np.sqrt(KAPPA) * C * C * r_e ** 3 / G * Mass_0_int
@@ -1075,11 +1125,9 @@ def mass_radius(s_gp, mu_arr, eos,
         Mass_0 = 4.0 * PI * r_e ** 3 * Mass_0_int
 
     # ---- Angular momentum ------------------------------------------
-    D_J = np.zeros((SDIV, MDIV))
-    for j in range(1, SDIV):
-        D_J[j, :] = (exp2agp[j, :] * jac[j] * sin_th *
-                     (energy[j, :] + pressure[j, :]) *
-                     np.sqrt(v2[j, :]) / omv2[j, :])
+    D_J = (exp2agp * jac_2d * sin_th[None, :] *
+           (energy + pressure) * np.sqrt(v2) / omv2)
+    D_J[0, :] = 0.0
     J_int = np.trapezoid(np.trapezoid(D_J, dx=DM, axis=1), dx=DS)
     if is_tab:
         J = 4.0 * PI * KAPPA * C * C * C * r_e ** 4 / G * J_int
@@ -1341,9 +1389,8 @@ def plot_star(s_gp, mu_arr, eos,
 
     # ── super-title ───────────────────────────────────────────────────────
     if is_tab:
-        ec_SI    = e_center / (C**2 * KSCALE) * 1e3   # g/cm³ → kg/m³
-        Omega_SI = Omega    * C / np.sqrt(KAPPA)       # code  → rad/s
-        OK_SI    = Omega_K  * C / np.sqrt(KAPPA)
+        ec_SI = e_center / (C**2 * KSCALE) * 1e3   # g/cm³ → kg/m³
+        OK_SI = Omega_K  * C / np.sqrt(KAPPA)
         state    = "Rotating" if is_rotating else "Non-rotating"
         suptitle = (f"{state} neutron star   "
                     f"$M = {Mass/MSUN:.3f}\\,M_\\odot$,  "
@@ -1539,9 +1586,8 @@ Examples:
     # reproduction of the original RNS Green's-function kernel normalisation
     # that is only available in the original C source.  The implementation
     # below attempts the iteration but may not converge to the correct answer.
-    dr       = 0.05
-    diff     = Omega_K - Omega
-    old_diff = diff
+    dr   = 0.05
+    diff = Omega_K - Omega
     rho_saved   = rho.copy()
     gama_saved  = gama.copy()
     alpha_saved = alpha.copy()
@@ -1588,8 +1634,7 @@ Examples:
                   flush=True)
             break
 
-        old_diff = diff
-        diff     = Omega_K - Omega
+        diff = Omega_K - Omega
 
 
 if __name__ == "__main__":

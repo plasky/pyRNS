@@ -43,7 +43,6 @@ Unit conversions
 
 import argparse
 import os
-import sys
 import re
 import urllib.request
 import numpy as np
@@ -177,7 +176,6 @@ def find_eos(name_or_id, catalog=None):
             f"Run 'python3 muses_eos.py list' to see available EOS."
         )
     if len(matches) > 1:
-        names = [m["name"] for m in matches]
         raise ValueError(
             f"Ambiguous EOS name '{name_or_id}'. Matches:\n  " +
             "\n  ".join(f"[{m['id']}] {m['name']}" for m in matches)
@@ -264,12 +262,12 @@ def parse_compose(local_dir, n_min_fm3=1e-4, n_max_fm3=None):
         parts = line.split()
         if len(parts) < 9:
             continue
-        it, inb, iyq = int(parts[0]), int(parts[1]), int(parts[2])
+        inb = int(parts[1])
         cols = [float(x) for x in parts[3:10]]   # up to 7 thermo quantities
         rows[inb] = cols
 
     # Build EOS table
-    e_list, p_list, h_list, n0_list = [], [], [], []
+    e_list, p_list, n0_list = [], [], []
 
     for inb in sorted(rows.keys()):
         n_B = nb_arr[inb - 1]          # fm⁻³
@@ -332,7 +330,6 @@ def parse_compose(local_dir, n_min_fm3=1e-4, n_max_fm3=None):
 
     # Find the first index from which e, p, h are all simultaneously
     # monotonically increasing (march forward from the dense end)
-    n = len(e_arr)
     # First ensure e is sorted; keep only points with e strictly increasing
     mono_e = np.concatenate(([True], np.diff(e_arr) > 0))
     e_arr  = e_arr[mono_e];  p_arr  = p_arr[mono_e]
@@ -419,7 +416,7 @@ def fetch_and_convert(name_or_id, outdir="eos/", n_min=1e-4,
     entry    = find_eos(name_or_id, catalog)
     print(f"  Found: [{entry['id']}] {entry['name']}")
 
-    print(f"[2/3] Fetching CompOSE raw files …")
+    print("[2/3] Fetching CompOSE raw files …")
     local_dir = download_eos(entry, outdir=outdir, force=force)
 
     # ── check whether the converted RNS file is already up-to-date ────────
@@ -437,7 +434,7 @@ def fetch_and_convert(name_or_id, outdir="eos/", n_min=1e-4,
     if rns_is_fresh:
         print(f"[3/3] Using cached RNS EOS file: {rns_file}")
     else:
-        print(f"[3/3] Converting to RNS tabulated format …")
+        print("[3/3] Converting to RNS tabulated format …")
         data = parse_compose(local_dir, n_min_fm3=n_min, n_max_fm3=n_max)
         write_rns_eos(data, rns_file)
         print(f"  {data['n_pts']} points, "
