@@ -2,12 +2,21 @@
 
 ## Requirements
 
-| Package | Minimum version | Notes |
-|---------|----------------|-------|
-| Python | 3.9 | f-strings, `math.isfinite` |
-| NumPy | 1.24 | `np.trapezoid` (NumPy ≥ 2.0) |
-| SciPy | 1.10 | `scipy.linalg.solve_banded` |
+### Core (required)
+
+| Package | Minimum version | Purpose |
+|---------|----------------|---------|
+| Python | 3.9 | runtime |
+| NumPy | 1.24 | arrays, `np.trapezoid` |
+| SciPy | 1.10 | banded solver, Gaussian KDE |
 | Matplotlib | 3.7 | Agg backend, `constrained_layout` |
+
+### Optional
+
+| Package | Purpose |
+|---------|---------|
+| bilby | Native reading of Bilby GW result files in `gw_posterior.py`; if absent, files are parsed manually |
+| h5py | Reading Bilby HDF5 result files without the `bilby` package |
 
 All packages are available via `pip`.  No compiled extensions are required.
 
@@ -17,11 +26,14 @@ All packages are available via `pip`.  No compiled extensions are required.
 
 ```bash
 # Clone the repository
-git clone <repo-url>
+git clone https://github.com/plasky/pyRNS.git
 cd pyRNS
 
-# Install dependencies
+# Core dependencies
 python3 -m pip install numpy scipy matplotlib
+
+# Optional: Bilby GW posterior reading (gw_posterior.py)
+python3 -m pip install bilby h5py
 
 # Confirm
 python3 -c "import pyRNS; print('pyRNS import OK')"

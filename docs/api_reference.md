@@ -389,3 +389,114 @@ run_mrseq([94, 184])
 #### `run_star(name_or_id, e_center_g_cm3=1e15, outdir="eos/", n_min=1e-4, force=False, plot=True, savefig=None, verbose=False)`
 
 Fetch and convert an EOS, then call `pyRNS.py` for a single model.
+
+---
+
+## gw_posterior.py
+
+---
+
+### Universal relations
+
+---
+
+#### `lambda_to_compactness(lam, relation="de2018") → C`
+
+Convert dimensionless tidal deformability Λ to compactness C = GM/(c²R).
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `lam` | array-like | Tidal deformability Λ > 0 |
+| `relation` | str | `'de2018'` (default) or `'yy2013'` |
+
+**Returns** `C` (ndarray) — compactness, clipped to [0.05, 0.50].
+
+**Relations**
+
+- `de2018` — De et al. (2018) PRL 121 091102: C = 0.371 − 0.0391 ln Λ + 0.001056 (ln Λ)²
+- `yy2013` — Yagi & Yunes (2013) PRD 88 023009, Table I, inverted numerically
+
+---
+
+#### `lambda_to_radius(mass_msun, lam, relation="de2018") → R_km`
+
+Convert (mass [M☉], Λ) to circumferential radius [km].
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `mass_msun` | array-like | Gravitational mass in M☉ |
+| `lam` | array-like | Dimensionless tidal deformability Λ |
+| `relation` | str | Universal relation to use |
+
+**Returns** `R_km` (ndarray) — radius in km.
+
+---
+
+### File I/O
+
+---
+
+#### `read_bilby(filename) → (posterior, meta)`
+
+Read a Bilby result file.  Supported formats: `.json`, `.hdf5`, `.h5`,
+`.csv`, `.txt`.  Uses the `bilby` package natively if installed; otherwise
+parses manually.
+
+**Returns**
+
+| Name | Type | Description |
+|------|------|-------------|
+| `posterior` | `dict[str, ndarray]` | `{parameter_name: samples}` |
+| `meta` | `dict` | `label`, `n_samples`, `log_evidence`, `sampler` |
+
+---
+
+### Computation
+
+---
+
+#### `compute_mr_ppd(posterior, component="both", relation="de2018", n_samples=None, rng_seed=42) → (M_arr, R_arr, labels)`
+
+Convert a posterior dict to (mass, radius) pairs.
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `posterior` | — | Dict from `read_bilby()` |
+| `component` | `"both"` | `'1'`, `'2'`, or `'both'` |
+| `relation` | `"de2018"` | Universal Λ–C relation |
+| `n_samples` | `None` | Thin to this many samples (None = all) |
+| `rng_seed` | `42` | RNG seed for thinning |
+
+**Returns**
+
+| Name | Type | Description |
+|------|------|-------------|
+| `M_arr` | ndarray | Masses [M☉] |
+| `R_arr` | ndarray | Radii [km] |
+| `labels` | list[str] | `'1'` or `'2'` per sample |
+
+---
+
+#### `print_summary(M_arr, R_arr, labels=None)`
+
+Print median and 90% credible interval (5th–95th percentile) for M and R,
+broken down by component if `labels` is provided.
+
+---
+
+### Plotting
+
+---
+
+#### `plot_mr_ppd(M_arr, R_arr, labels=None, *, savefig, title=None, credible_levels=(0.50, 0.90), mr_eos_file=None, mr_curve_data=None, event_label="GW event")`
+
+Save a M-R posterior predictive figure to `savefig` (PDF, no window).
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `savefig` | required | Output PDF path |
+| `title` | `None` | Figure suptitle |
+| `credible_levels` | `(0.50, 0.90)` | KDE credible-region levels to draw |
+| `mr_eos_file` | `None` | Tabulated RNS EOS file for M-R overlay |
+| `mr_curve_data` | `None` | Pre-computed `(R_arr, M_arr)` tuple for overlay |
+| `event_label` | `"GW event"` | Legend label |

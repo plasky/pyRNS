@@ -18,9 +18,11 @@ improved by Cook, Shapiro & Teukolsky (1994).
 | `pyRNS.py` | Core TOV solver, metric initialisation, single-star diagnostic plots |
 | `mr_curve.py` | Mass-radius sequences with 4-panel publication plots |
 | `muses_eos.py` | CompOSE/MUSES EOS catalog interface — download, cache, compare |
+| `gw_posterior.py` | GW posterior samples (Bilby) → M-R posterior predictive distribution |
 
 - **Non-rotating stars** fully solved (mass, baryon mass, radius, Ω_K all correct)
 - **300+ EOS** accessible via the CompOSE database with one command
+- **GW EOS inference** — convert Bilby tidal-deformability posteriors to (M, R) PPDs using universal Λ–C relations
 - **Automatic caching** — EOS catalog and data files stored locally after first fetch
 - **Publication-quality figures** using a bundled `publication` matplotlib style
   (Times New Roman, LaTeX labels, no interactive window)
@@ -45,6 +47,12 @@ python3 muses_eos.py mrseq --eos "HS(DD2)"
 
 # 5. Compare multiple EOS on one figure
 python3 muses_eos.py mrseq --eos "RG(SK255)" "HS(DD2)" "DS(CMF)-5"
+
+# 6. Convert Bilby GW posteriors to M-R posterior predictive distribution
+python3 gw_posterior.py posterior.json
+
+# 7. As above, overlaying an EOS M-R curve
+python3 gw_posterior.py posterior.json --mr-eos eos/eosA
 ```
 
 ---
@@ -57,24 +65,29 @@ python3 muses_eos.py mrseq --eos "RG(SK255)" "HS(DD2)" "DS(CMF)-5"
 |---------|---------|---------|
 | Python  | ≥ 3.9   | runtime |
 | NumPy   | ≥ 1.24  | arrays  |
-| SciPy   | ≥ 1.10  | banded linear solver |
+| SciPy   | ≥ 1.10  | banded linear solver, KDE |
 | Matplotlib | ≥ 3.7 | plotting |
+| bilby   | optional | native Bilby result reading (`gw_posterior.py`) |
+| h5py    | optional | HDF5 Bilby files without bilby installed |
 
 ### Setup
 
 ```bash
 # Clone
-git clone <repo-url>
+git clone https://github.com/plasky/pyRNS.git
 cd pyRNS
 
-# Install dependencies (system Python)
+# Core dependencies
 python3 -m pip install numpy scipy matplotlib --break-system-packages
+
+# Optional: for reading Bilby GW posterior files directly
+python3 -m pip install bilby h5py --break-system-packages
 
 # Verify
 python3 -c "import pyRNS; print('OK')"
 ```
 
-No build step or `pip install .` is required — all three scripts are
+No build step or `pip install .` is required — all scripts are
 standalone and import each other directly.
 
 ---
@@ -86,6 +99,7 @@ pyRNS/
 ├── pyRNS.py               # core solver + plotting
 ├── mr_curve.py            # mass-radius sequences
 ├── muses_eos.py           # CompOSE/MUSES interface
+├── gw_posterior.py        # GW posterior → M-R PPD
 ├── publication.mplstyle   # bundled matplotlib style
 ├── eos/                   # EOS library
 │   ├── eosA … eosWS       # 15 tabulated EOS from original RNS
@@ -100,6 +114,7 @@ pyRNS/
     ├── usage_pyRNS.md
     ├── usage_mr_curve.md
     ├── usage_muses.md
+    ├── usage_gw_posterior.md
     ├── eos_format.md
     └── api_reference.md
 ```
@@ -115,6 +130,7 @@ pyRNS/
 | [pyRNS usage](docs/usage_pyRNS.md) | Single-star models, CLI options, plots |
 | [mr_curve usage](docs/usage_mr_curve.md) | Mass-radius sequences, unit conventions |
 | [MUSES/CompOSE usage](docs/usage_muses.md) | EOS catalog, multi-EOS comparisons |
+| [GW posterior usage](docs/usage_gw_posterior.md) | Bilby posteriors → M-R PPD, universal Λ–R relations |
 | [EOS file format](docs/eos_format.md) | Tabulated EOS columns, units, conversion |
 | [API reference](docs/api_reference.md) | All public functions and signatures |
 
@@ -147,6 +163,15 @@ When multiple EOS are specified, a two-panel figure is saved:
 
 - **M–R diagram** — all EOS on one set of axes, colour-coded with legend
 - **Compactness** — same layout
+
+### GW posterior predictive — `gw_posterior.py`
+
+Reads a Bilby result file containing (m₁, m₂, Λ₁, Λ₂) samples and saves
+a two-panel figure (`<event>_mr_ppd.pdf`):
+
+- **M–R posterior predictive** — 50% and 90% KDE credible contours for both
+  neutron-star components, optionally with an EOS M-R curve overlaid
+- **Summary statistics** — median and 90% CI for M and R, printed to terminal
 
 ---
 
@@ -196,5 +221,8 @@ Twelve of the fifteen original RNS EOS files work at 10¹⁵ g cm⁻³:
 2. Cook, Shapiro & Teukolsky (1994), *ApJ* 422, 227 — improved KEH
 3. Stergioulas & Friedman (1995), *ApJ* 444, 306 — RNS code
 4. Original C code: RNS v2.0 by N. Stergioulas (1999), [github.com/cgca/rns](https://github.com/cgca/rns)
-5. CompOSE database: [compose.obspm.fr](https://compose.obspm.fr)
-6. MUSES framework: [musesframework.io](https://musesframework.io)
+5. De et al. (2018), *PRL* 121, 091102 — universal Λ–compactness relation
+6. Yagi & Yunes (2013), *PRD* 88, 023009 — I-Love-Q universal relations
+7. CompOSE database: [compose.obspm.fr](https://compose.obspm.fr)
+8. MUSES framework: [musesframework.io](https://musesframework.io)
+9. Bilby: [lscsoft.docs.ligo.org/bilby](https://lscsoft.docs.ligo.org/bilby/)
