@@ -1,0 +1,48 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# macOS
+.DS_Store
+.AppleDouble
+
+# Output files (PDFs, data)
+*.pdf
+mr_data.txt
+star_*.pdf
+mr_*.pdf
+
+# Temporary / editor files
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
+
+# Memory (project-internal notes, not for public repo)
+memory/
+
+# CompOSE download cache — raw data files are large; keep only converted files
+eos/*/eos.thermo
+eos/*/eos.nb
+eos/*/eos.t
+eos/*/eos.yq
+eos/_catalog_cache.json
+
+# Keep these CompOSE outputs (small, useful to share)
+!eos/*/eos.mr
+!eos/*/*_rns.eos
+!eos/*/*_mr.txt

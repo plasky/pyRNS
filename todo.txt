@@ -1,0 +1,12 @@
+
+6. Create a github and push 
+6. Make the code modular
+
+
+DONE:
+1. code outputs, including plots, etc.
+2. Make outputs in physical units 
+3. fully integrate it with the muses library
+4. use 'publications' style for outputs, but fully integrate it so it works independently.
+5. Ability to make plots with multiple curves
+7. Create full documentation
