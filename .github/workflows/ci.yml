@@ -1,0 +1,88 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    name: Tests  (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # ── Python setup ──────────────────────────────────────────────────
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      # ── Dependency cache ─────────────────────────────────────────────
+      - name: Cache pip packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ matrix.python-version }}-${{ hashFiles('requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-${{ matrix.python-version }}-
+
+      # ── Install ───────────────────────────────────────────────────────
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install numpy scipy matplotlib
+          python -m pip install pytest pytest-cov
+          # Optional: Bilby GW posterior reading
+          python -m pip install h5py || true
+
+      # ── LaTeX for plots (publication.mplstyle uses text.usetex=True) ─
+      - name: Install LaTeX (minimal)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            texlive-latex-base texlive-fonts-recommended \
+            texlive-latex-extra dvipng cm-super
+
+      # ── Fast unit tests ───────────────────────────────────────────────
+      - name: Run fast tests
+        run: |
+          python -m pytest -m "fast" \
+            --cov=pyRNS --cov=mr_curve --cov=muses_eos --cov=gw_posterior \
+            --cov-report=term-missing \
+            -v
+
+      # ── Slow integration tests ────────────────────────────────────────
+      - name: Run slow integration tests
+        run: |
+          python -m pytest -m "slow" \
+            --cov=pyRNS --cov=mr_curve \
+            --cov-report=term-missing \
+            --cov-append \
+            -v
+        timeout-minutes: 15
+
+      # ── Combined coverage report ──────────────────────────────────────
+      - name: Coverage summary
+        run: |
+          python -m pytest -m "fast or slow" \
+            --cov=pyRNS --cov=mr_curve --cov=muses_eos --cov=gw_posterior \
+            --cov-report=xml \
+            --cov-report=term \
+            -q
+        continue-on-error: true
+
+      # ── Upload coverage ───────────────────────────────────────────────
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        if: matrix.python-version == '3.11'
+        with:
+          files: ./coverage.xml
+          fail_ci_if_error: false
